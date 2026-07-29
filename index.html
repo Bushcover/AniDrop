@@ -6,16 +6,17 @@
     <meta name="theme-color" content="#8A9A5B" />
     <meta name="description" content="AniDrop - Live Anime & Manga Tracker" />
     
-    <link rel="icon" type="image/svg+xml" href="icon-192.svg" />
-    <link rel="apple-touch-icon" href="icon-192.svg" />
+    <!-- FORCED FAVICON UPDATES -->
+    <link rel="shortcut icon" type="image/png" href="./icon-192.png?v=3" />
+    <link rel="icon" type="image/png" href="./icon-192.png?v=3" />
+    <link rel="apple-touch-icon" href="./icon-192.png?v=3" />
     <link rel="manifest" href="manifest.json" />
     
     <title>AniDrop</title>
 
-    <!-- 1. Tailwind CSS Engine -->
+    <!-- Tailwind CSS Engine -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      /* Custom Scrollbar Utilities */
       .hide-scrollbar::-webkit-scrollbar { display: none; }
       .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       .custom-scrollbar::-webkit-scrollbar { width: 6px; }
@@ -23,7 +24,7 @@
       .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 10px; }
     </style>
 
-    <!-- 2. Import Map for NPM Packages -->
+    <!-- Import Map for NPM Packages -->
     <script type="importmap">
       {
         "imports": {
@@ -35,17 +36,17 @@
       }
     </script>
 
-    <!-- 3. Babel Compiler -->
+    <!-- Babel Compiler -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
 
-    <!-- 4. Load your App as a Babel Module -->
+    <!-- Load your App -->
     <script type="text/babel" data-type="module" src="App.jsx"></script>
 
-    <!-- 5. Register PWA Service Worker -->
+    <!-- Register PWA Service Worker -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
