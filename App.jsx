@@ -278,7 +278,11 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   
+  // NEW: Bulletproof Internal Notification States
   const [notifsEnabled, setNotifsEnabled] = useState(Notification.permission === 'granted');
+  const [notifications, setNotifications] = useState(() => JSON.parse(localStorage.getItem('appNotifications') || '[]'));
+  const [isNotifMenuOpen, setIsNotifMenuOpen] = useState(false);
+
   const [showToast, setShowToast] = useState(false);
   const [showShareCard, setShowShareCard] = useState(false);
 
@@ -303,7 +307,6 @@ function App() {
   const [detailsMedia, setDetailsMedia] = useState(null);
   const [zenModeMedia, setZenModeMedia] = useState(null);
   const [scheduleModalMedia, setScheduleModalMedia] = useState(null);
-  const [isDayOpen, setIsDayOpen] = useState(false);
   
   const [scheduleDay, setScheduleDay] = useState('');
   const [scheduleHour, setScheduleHour] = useState('');
@@ -312,7 +315,6 @@ function App() {
 
   const fetchControllerRef = useRef(null);
   const hasFetchedRef = useRef({ anime: false, manga: false });
-  const notifiedDrops = useRef(new Set());
 
   const isAnime = mediaMode === 'anime';
   const accentColor = isAnime ? 'bg-[var(--accent-matcha)]' : 'bg-[var(--accent-taro)]';
@@ -362,6 +364,7 @@ function App() {
   useEffect(() => { localStorage.setItem('mangaSchedules', JSON.stringify(mangaSchedules)); }, [mangaSchedules]);
   useEffect(() => { localStorage.setItem('dismissedDrops', JSON.stringify(dismissedDrops)); }, [dismissedDrops]);
   useEffect(() => { localStorage.setItem('mediaProgress', JSON.stringify(mediaProgress)); }, [mediaProgress]);
+  useEffect(() => { localStorage.setItem('appNotifications', JSON.stringify(notifications)); }, [notifications]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -484,17 +487,16 @@ function App() {
     return () => clearInterval(interval);
   }, [fetchMedia]);
 
-  useEffect(() => {
-    if (!notifsEnabled || Notification.permission !== 'granted') return;
 
+  // ==========================================
+  // BULLETPROOF NOTIFICATION ENGINE
+  // ==========================================
+  useEffect(() => {
     const checkDrops = () => {
       const nowSecs = Math.floor(Date.now() / 1000);
 
-      // Deduplicate media efficiently
       const allMedia = [...pinnedAnime, ...scheduledAnime, ...pinnedManga, ...scheduledManga];
-      const uniqueShows = Array.from(
-        new Map(allMedia.filter(Boolean).map(item => [item.id, item])).values()
-      );
+      const uniqueShows = Array.from(new Map(allMedia.filter(Boolean).map(item => [item.id, item])).values());
 
       uniqueShows.forEach(media => {
         let rawTs = media.nextEpisodeTimestamp;
@@ -504,7 +506,6 @@ function App() {
 
         if (!rawTs || rawTs === 'HIATUS') return;
 
-        // Normalize targetTs to seconds
         let targetTs = rawTs instanceof Date ? Math.floor(rawTs.getTime() / 1000) : Number(rawTs);
         if (targetTs > 10000000000) { 
           targetTs = Math.floor(targetTs / 1000);
@@ -513,44 +514,74 @@ function App() {
         const diff = targetTs - nowSecs;
         const notifyId = `${media.id}-${targetTs}`;
 
-        // Trigger alert if dropping in <= 10 minutes (600 seconds)
-        if (diff > 0 && diff <= 600 && !notifiedDrops.current.has(notifyId)) {
-          const title = 'AniDrop Alert!';
-          const options = {
-            body: `${media.title} drops in 10 minutes!`,
-            icon: media.image,
-          };
+        // Expanded window: 10 minutes BEFORE the drop, up to 1 minute AFTER
+        if (diff > -60 && diff <= 600) {
+          setNotifications(prev => {
+            // Deduplicate: If it's already in the internal tray, do not fire again.
+            if (prev.some(n => n.id === notifyId)) return prev;
 
-          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-            navigator.serviceWorker.ready.then(reg => {
-              reg.showNotification(title, options);
-            });
-          } else {
-            new Notification(title, options);
-          }
+            const timeMsg = diff > 0 ? `Drops in ${Math.ceil(diff / 60)} minutes!` : `Dropped just now!`;
+            const newNotif = {
+              id: notifyId,
+              title: media.title,
+              message: timeMsg,
+              image: media.image,
+              timestamp: Date.now(),
+              read: false
+            };
 
-          notifiedDrops.current.add(notifyId);
+            // Attempt strictly gated OS Alert
+            if (notifsEnabled && Notification.permission === 'granted') {
+              const title = 'AniDrop Alert!';
+              const options = { body: timeMsg, icon: media.image };
+
+              try {
+                if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                  navigator.serviceWorker.ready.then(reg => {
+                    reg.showNotification(title, options);
+                  }).catch(() => new Notification(title, options));
+                } else {
+                  new Notification(title, options);
+                }
+              } catch(e) {
+                try { new Notification(title, options); } catch(fallbackErr) {}
+              }
+            }
+
+            // Push to internal tray (limit to 50 to prevent localstorage bloat)
+            return [newNotif, ...prev].slice(0, 50);
+          });
         }
       });
     };
 
     checkDrops();
     const interval = setInterval(checkDrops, 10000);
-
     return () => clearInterval(interval);
   }, [pinnedAnime, scheduledAnime, pinnedManga, scheduledManga, mangaSchedules, notifsEnabled]);
 
-  const handleRequestNotifications = () => {
+  const toggleOSNotifs = () => {
     if (Notification.permission === 'granted') {
       setNotifsEnabled(prev => !prev);
     } else if (Notification.permission === 'denied') {
-      alert("Notifications are blocked! Please click the lock icon in your browser URL bar to allow them.");
+      alert("Notifications are completely blocked! Please click the lock icon in your browser's URL bar to allow them.");
     } else {
       Notification.requestPermission().then(perm => {
         if (perm === 'granted') setNotifsEnabled(true);
       });
     }
   };
+
+  const markAllNotifsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  };
+
+  const clearNotifs = () => {
+    setNotifications([]);
+    setIsNotifMenuOpen(false);
+  };
+  // ==========================================
+
 
   const togglePin = (media, e) => {
     if (e) e.stopPropagation();
@@ -930,6 +961,8 @@ function App() {
     );
   };
 
+  const unreadNotifCount = notifications.filter(n => !n.read).length;
+
   return (
     <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-espresso)] font-sans selection:bg-[var(--accent-matcha)] selection:text-white pb-20 transition-colors duration-500">
       
@@ -942,7 +975,7 @@ function App() {
 
       <header className="bg-[var(--card-bg)] sticky top-0 z-50 border-b border-[var(--border-light)] shadow-sm px-4 md:px-8 py-4 transition-colors duration-500 ease-out">
         <div className="max-w-7xl mx-auto flex flex-col gap-4">
-          <div className="flex justify-between items-center w-full">
+          <div className="flex justify-between items-center w-full relative">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl shadow-sm transition-all duration-300 ease-out overflow-hidden flex items-center justify-center relative">
                 <img src="./icon-192.png" alt="AniDrop Logo" className="w-full h-full object-cover" />
@@ -963,15 +996,64 @@ function App() {
               >
                 <Share2 size={18} className="md:w-5 md:h-5" />
               </button>
-              <button 
-                onClick={handleRequestNotifications}
-                className={`p-2 md:p-2.5 rounded-full hover:bg-[var(--bg-cream)] transition-all duration-300 ease-out active:scale-95 ${
-                  notifsEnabled ? accentText : 'text-[var(--text-espresso)]/50 hover:text-[var(--text-espresso)]'
-                }`}
-                title="Notifications"
-              >
-                <Bell size={18} className="md:w-5 md:h-5" fill={notifsEnabled ? "currentColor" : "none"} />
-              </button>
+              
+              {/* THE NEW NOTIFICATION BELL & DROPDOWN */}
+              <div className="relative">
+                <button 
+                  onClick={() => { setIsNotifMenuOpen(!isNotifMenuOpen); markAllNotifsRead(); }}
+                  className="p-2 md:p-2.5 rounded-full hover:bg-[var(--bg-cream)] text-[var(--text-espresso)] transition-all duration-300 ease-out active:scale-95 relative"
+                  title="Notifications"
+                >
+                  <Bell size={18} className="md:w-5 md:h-5" fill={unreadNotifCount > 0 ? "currentColor" : "none"} />
+                  {unreadNotifCount > 0 && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 border-2 border-[var(--card-bg)] rounded-full animate-pulse"></span>
+                  )}
+                </button>
+
+                {isNotifMenuOpen && (
+                  <div className="absolute top-full right-0 mt-2 w-[85vw] max-w-sm bg-[var(--bg-main)] border-2 border-[var(--border-med)] rounded-2xl shadow-2xl z-[200] overflow-hidden flex flex-col max-h-[70vh] animate-in fade-in slide-in-from-top-2">
+                    <div className="p-4 border-b border-[var(--border-light)] flex justify-between items-center bg-[var(--card-bg)]">
+                      <h3 className="font-black text-[var(--text-espresso)] flex items-center gap-2">
+                        <Bell size={18} /> Alerts Tray
+                      </h3>
+                      <button onClick={() => setIsNotifMenuOpen(false)} className="text-[var(--text-espresso)]/60 hover:text-[var(--text-espresso)]"><X size={18}/></button>
+                    </div>
+                    
+                    <div className="p-3 bg-[var(--bg-cream)] border-b border-[var(--border-light)] flex justify-between items-center shrink-0">
+                      <span className="text-xs font-bold text-[var(--text-espresso)]/80">Desktop OS Alerts</span>
+                      <button onClick={toggleOSNotifs} className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${notifsEnabled ? 'bg-green-500 text-white shadow-sm' : 'bg-[var(--border-med)] text-[var(--text-espresso)]'}`}>
+                        {notifsEnabled ? 'ON' : 'OFF'}
+                      </button>
+                    </div>
+
+                    <div className="overflow-y-auto custom-scrollbar flex-1 p-2 space-y-2">
+                      {notifications.length === 0 ? (
+                        <div className="p-6 flex flex-col items-center text-center text-[var(--text-espresso)]/40 gap-2">
+                          <Inbox size={32} />
+                          <p className="text-sm font-bold">No new drops yet!</p>
+                        </div>
+                      ) : (
+                        notifications.map(n => (
+                          <div key={n.id} className={`p-3 rounded-xl border flex gap-3 items-center transition-colors duration-300 ${n.read ? 'bg-[var(--card-bg)] border-[var(--border-light)] opacity-70' : 'bg-[var(--bg-cream)] border-[var(--accent-matcha)] shadow-md'}`}>
+                            <img src={n.image} className="w-10 h-10 rounded-lg object-cover shrink-0" alt="" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold text-[var(--text-espresso)] truncate leading-tight mb-0.5">{n.title}</p>
+                              <p className="text-xs font-mono font-bold text-[var(--text-espresso)]/70">{n.message}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    
+                    {notifications.length > 0 && (
+                      <button onClick={clearNotifs} className="p-3 text-center text-xs font-bold text-[var(--text-espresso)]/60 hover:text-[var(--text-espresso)] hover:bg-[var(--bg-cream)] bg-[var(--card-bg)] border-t border-[var(--border-light)] w-full transition-colors shrink-0">
+                        Clear Tray
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <button 
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className="p-2 md:p-2.5 rounded-full hover:bg-[var(--bg-cream)] text-[var(--text-espresso)] transition-all duration-300 ease-out active:scale-95"
