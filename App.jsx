@@ -484,12 +484,13 @@ function App() {
     return () => clearInterval(interval);
   }, [fetchMedia]);
 
- useEffect(() => {
+  useEffect(() => {
     if (!notifsEnabled || Notification.permission !== 'granted') return;
 
     const checkDrops = () => {
       const nowSecs = Math.floor(Date.now() / 1000);
 
+      // Deduplicate media efficiently
       const allMedia = [...pinnedAnime, ...scheduledAnime, ...pinnedManga, ...scheduledManga];
       const uniqueShows = Array.from(
         new Map(allMedia.filter(Boolean).map(item => [item.id, item])).values()
@@ -503,14 +504,16 @@ function App() {
 
         if (!rawTs || rawTs === 'HIATUS') return;
 
+        // Normalize targetTs to seconds
         let targetTs = rawTs instanceof Date ? Math.floor(rawTs.getTime() / 1000) : Number(rawTs);
-        if (targetTs > 10000000000) {
+        if (targetTs > 10000000000) { 
           targetTs = Math.floor(targetTs / 1000);
         }
 
         const diff = targetTs - nowSecs;
         const notifyId = `${media.id}-${targetTs}`;
 
+        // Trigger alert if dropping in <= 10 minutes (600 seconds)
         if (diff > 0 && diff <= 600 && !notifiedDrops.current.has(notifyId)) {
           const title = 'AniDrop Alert!';
           const options = {
@@ -539,10 +542,8 @@ function App() {
 
   const handleRequestNotifications = () => {
     if (Notification.permission === 'granted') {
-      // Allow user to toggle notifications off/on if already granted
       setNotifsEnabled(prev => !prev);
     } else if (Notification.permission === 'denied') {
-      // Warn the user if they blocked it in their browser settings
       alert("Notifications are blocked! Please click the lock icon in your browser URL bar to allow them.");
     } else {
       Notification.requestPermission().then(perm => {
@@ -943,9 +944,9 @@ function App() {
         <div className="max-w-7xl mx-auto flex flex-col gap-4">
           <div className="flex justify-between items-center w-full">
             <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-xl ${accentColor} text-white shadow-sm transition-all duration-300 ease-out`}>
-             {isAnime ? <MonitorPlay size={24} /> : <BookOpen size={24} />}
-           </div>
+              <div className="w-10 h-10 rounded-xl shadow-sm transition-all duration-300 ease-out overflow-hidden flex items-center justify-center relative">
+                <img src="./icon-192.png" alt="AniDrop Logo" className="w-full h-full object-cover" />
+              </div>
               <div>
                 <h1 className="text-xl md:text-2xl font-black tracking-tight leading-none transition-colors duration-500">AniDrop</h1>
                 <p className="text-[10px] md:text-xs font-semibold opacity-60 transition-colors duration-500">
@@ -1385,5 +1386,6 @@ function App() {
     </div>
   );
 }
+
 const root = createRoot(document.getElementById('root'));
 root.render(<App />);
